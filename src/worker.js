@@ -1,6 +1,5 @@
 // ============================================================
-//  Cloudflare Worker - HLS Proxy with 600-Second Expiry Token
-//  Variant m3u8, Key, MAP, Query String সব হ্যান্ডেল করে।
+//  Cloudflare Worker - HLS Proxy with 600-Second Expiry Token (FIXED HEADERS)
 // ============================================================
 
 const CHANNEL_MAP = {
@@ -44,9 +43,7 @@ async function createProxyUrl(originalUrl, baseUrl, channelName, expiry, secret,
 async function rewriteM3U8Content(text, baseUrl, channelName, secret, workerBase) {
   const lines = text.split('\n');
   const now = Math.floor(Date.now() / 1000);
-  
-  // 🟢 এখানে মেয়াদ ৬০০ সেকেন্ড (১০ মিনিট) করা হলো
-  const expiry = now + 600;
+  const expiry = now + 600; // 10 minutes
 
   const rewritten = await Promise.all(lines.map(async (line) => {
     const keyMatch = line.match(/^(#EXT-X-KEY:|#EXT-X-MAP:)(.*?)URI="([^"]*)"/i);
@@ -76,6 +73,7 @@ export default {
     const pathname = url.pathname;
     const workerBase = `https://${request.headers.get('host')}`;
 
+    // --- PROXY ROUTE (/p/...) ---
     if (pathname.startsWith('/p/')) {
       const parts = pathname.replace(/^\/p\//, '').split('/');
       if (parts.length < 2) return new Response('Invalid proxy path', { status: 400 });
@@ -97,8 +95,19 @@ export default {
       const baseUrl = originalBase.substring(0, originalBase.lastIndexOf('/') + 1);
       const originalUrl = baseUrl + relativePath.slice(1) + decodeURIComponent(originalQuery);
 
+      // 🔥 স্মার্ট হেডার তৈরি করা হচ্ছে (সোর্সের ডোমেইন অনুযায়ী)
+      const sourceDomain = new URL(originalBase).hostname;
+      
       const resp = await fetch(originalUrl, {
-        headers: { 'User-Agent': 'VLC/3.0.0', 'Origin': new URL(originalBase).origin }
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+          'Origin': `https://${sourceDomain}`,
+          'Referer': `https://${sourceDomain}/`,
+          'Accept': '*/*',
+          'Accept-Encoding': 'gzip, deflate, br',
+          'Accept-Language': 'en-US,en;q=0.9',
+          'Connection': 'keep-alive'
+        }
       });
 
       const contentType = resp.headers.get('content-type') || '';
@@ -116,13 +125,25 @@ export default {
       return new Response(resp.body, { status: resp.status, headers: newHeaders });
     }
 
+    // --- MAIN M3U8 ROUTE ---
     if (pathname.endsWith('.m3u8') || pathname.endsWith('.m3u')) {
       const channelName = pathname.slice(1, -5); 
       if (CHANNEL_MAP[channelName]) {
         const baseUrl = CHANNEL_MAP[channelName].substring(0, CHANNEL_MAP[channelName].lastIndexOf('/') + 1);
+        const sourceDomain = new URL(CHANNEL_MAP[channelName]).hostname;
+
         const resp = await fetch(CHANNEL_MAP[channelName], {
-          headers: { 'User-Agent': 'VLC/3.0.0', 'Origin': new URL(CHANNEL_MAP[channelName]).origin }
+          headers: {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'Origin': `https://${sourceDomain}`,
+            'Referer': `https://${sourceDomain}/`,
+            'Accept': '*/*',
+            'Accept-Encoding': 'gzip, deflate, br',
+            'Accept-Language': 'en-US,en;q=0.9',
+            'Connection': 'keep-alive'
+          }
         });
+        
         const text = await resp.text();
         const rewritten = await rewriteM3U8Content(text, baseUrl, channelName, SECRET, workerBase);
         return new Response(rewritten, {
