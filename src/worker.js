@@ -1,5 +1,5 @@
 // ============================================================
-//  Cloudflare Worker - HLS Proxy with 60-Second Expiry Token (Universal)
+//  Cloudflare Worker - HLS Proxy with 600-Second Expiry Token
 //  Variant m3u8, Key, MAP, Query String সব হ্যান্ডেল করে।
 // ============================================================
 
@@ -44,7 +44,9 @@ async function createProxyUrl(originalUrl, baseUrl, channelName, expiry, secret,
 async function rewriteM3U8Content(text, baseUrl, channelName, secret, workerBase) {
   const lines = text.split('\n');
   const now = Math.floor(Date.now() / 1000);
-  const expiry = now + 60;
+  
+  // 🟢 এখানে মেয়াদ ৬০০ সেকেন্ড (১০ মিনিট) করা হলো
+  const expiry = now + 600;
 
   const rewritten = await Promise.all(lines.map(async (line) => {
     const keyMatch = line.match(/^(#EXT-X-KEY:|#EXT-X-MAP:)(.*?)URI="([^"]*)"/i);
