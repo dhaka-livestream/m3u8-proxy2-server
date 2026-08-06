@@ -1,12 +1,9 @@
 // ============================================================
-//  HLS PROXY - FULLY WORKING WITH TEST CHANNEL
+//  ULTIMATE HLS PROXY - FORCED HEADERS + TEST CHANNEL
 // ============================================================
 
 const CHANNEL_MAP = {
-  // 🔥 টেস্ট চ্যানেল (সর্বদা কাজ করে - Mux demo stream)
   "test": "https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8",
-  
-  // আপনার চ্যানেলগুলো (হয়তো হেডার বা টোকেন ইস্যু আছে)
   "starjalshahd-bdx2": "https://s3.itcnbd.live/server-4/stream/aHR0cDovLzE3Mi4xOS4xNy4yMzA6ODA5MC9obHMvU3RhckphbHNoYUhELm0zdTg.m3u8",
   "zeebanglahd-bdx2": "http://s3.itcnbd.live/server-4/stream/aHR0cDovLzE3Mi4xNi4yMDAuMjA1OjgwODgvMzAxL3RyYWNrcy12MWExL21vbm8ubTN1OD90b2tlbj00MTNmNjk2N2JjMWVkZmRkZDk2MzJmYzg4NmMwNjcyYTQ4ZDViZDgzLWI5NTkyYjI5OTAzMWZhNTUwMWQxNGJiYWZmN2NiNmI2LTE3ODU4NTMwOTctMTc4NTg0OTQ5Nw.m3u8",
   "starjalshahd-bdx3": "https://footfytv.pro/proxy/direct?url=http://103.151.61.12/Star_Jalsha/tracks-v1a1/mono.m3u8",
@@ -47,7 +44,7 @@ async function createProxyUrl(originalUrl, baseUrl, channelName, expiry, secret,
 async function rewriteM3U8Content(text, baseUrl, channelName, secret, workerBase) {
   const lines = text.split('\n');
   const now = Math.floor(Date.now() / 1000);
-  const expiry = now + 600; // 10 minutes
+  const expiry = now + 600; 
 
   const rewritten = await Promise.all(lines.map(async (line) => {
     const keyMatch = line.match(/^(#EXT-X-KEY:|#EXT-X-MAP:)(.*?)URI="([^"]*)"/i);
@@ -71,15 +68,13 @@ async function rewriteM3U8Content(text, baseUrl, channelName, secret, workerBase
 export default {
   async fetch(request, env, ctx) {
     const SECRET = env.SECRET_KEY;
-    if (!SECRET) {
-      return new Response('SECRET_KEY missing. Please add SECRET_KEY in Cloudflare Worker Environment Variables.', { status: 500 });
-    }
+    if (!SECRET) return new Response('SECRET_KEY missing', { status: 500 });
 
     const url = new URL(request.url);
     const pathname = url.pathname;
     const workerBase = `https://${request.headers.get('host')}`;
 
-    // --- PROXY ROUTE ---
+    // ----- PROXY ROUTE (/p/...) -----
     if (pathname.startsWith('/p/')) {
       const parts = pathname.replace(/^\/p\//, '').split('/');
       if (parts.length < 2) return new Response('Invalid proxy path', { status: 400 });
@@ -101,29 +96,33 @@ export default {
       const baseUrl = originalBase.substring(0, originalBase.lastIndexOf('/') + 1);
       const originalUrl = baseUrl + relativePath.slice(1) + decodeURIComponent(originalQuery);
 
-      // 🟢 স্মার্ট হেডার
-      const sourceDomain = new URL(originalBase).hostname;
-      
-      const resp = await fetch(originalUrl, {
-        headers: {
-          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-          'Origin': `https://${sourceDomain}`,
-          'Referer': `https://${sourceDomain}/`,
-          'Accept': '*/*',
-          'Accept-Encoding': 'gzip, deflate, br',
-          'Accept-Language': 'en-US,en;q=0.9',
-          'Connection': 'keep-alive',
-          'Cache-Control': 'no-cache'
-        }
-      });
+      // 🔥 সর্বোচ্চ হেডার সেট (সব রকম সোর্সের জন্য)
+      const headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Origin': 'https://s3.itcnbd.live',
+        'Referer': 'https://s3.itcnbd.live/',
+        'Accept': '*/*',
+        'Accept-Language': 'en-US,en;q=0.9',
+        'Accept-Encoding': 'gzip, deflate, br',
+        'Connection': 'keep-alive',
+        'Cache-Control': 'no-cache',
+        'Pragma': 'no-cache'
+      };
+
+      // যদি ক্লায়েন্ট থেকে Range হেডার আসে, সেটা ফরোয়ার্ড করি
+      if (request.headers.get('range')) {
+        headers['Range'] = request.headers.get('range');
+      }
+
+      const resp = await fetch(originalUrl, { headers });
 
       const contentType = resp.headers.get('content-type') || '';
       if (contentType.includes('mpegurl') || relativePath.endsWith('.m3u8') || relativePath.endsWith('.m3u')) {
         const text = await resp.text();
         const rewritten = await rewriteM3U8Content(text, baseUrl, channelName, SECRET, workerBase);
         return new Response(rewritten, {
-          headers: {
-            'Content-Type': 'application/vnd.apple.mpegurl',
+          headers: { 
+            'Content-Type': 'application/vnd.apple.mpegurl', 
             'Cache-Control': 'no-cache, no-store, must-revalidate',
             'Access-Control-Allow-Origin': '*',
             'Access-Control-Allow-Headers': '*',
@@ -132,38 +131,43 @@ export default {
         });
       }
 
+      // সেগমেন্ট (TS/MP4) রিটার্ন
       const newHeaders = new Headers(resp.headers);
       newHeaders.set('Cache-Control', 'no-cache, no-store, must-revalidate');
       newHeaders.set('Access-Control-Allow-Origin', '*');
+      newHeaders.set('Access-Control-Allow-Headers', '*');
       return new Response(resp.body, { status: resp.status, headers: newHeaders });
     }
 
-    // --- MAIN M3U8 ROUTE ---
+    // ----- MAIN M3U8 ROUTE -----
     if (pathname.endsWith('.m3u8') || pathname.endsWith('.m3u')) {
       const channelName = pathname.slice(1, -5); 
       if (CHANNEL_MAP[channelName]) {
-        const originalUrl = CHANNEL_MAP[channelName];
-        const baseUrl = originalUrl.substring(0, originalUrl.lastIndexOf('/') + 1);
-        const sourceDomain = new URL(originalUrl).hostname;
-
-        const resp = await fetch(originalUrl, {
-          headers: {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-            'Origin': `https://${sourceDomain}`,
-            'Referer': `https://${sourceDomain}/`,
-            'Accept': '*/*',
-            'Accept-Encoding': 'gzip, deflate, br',
-            'Accept-Language': 'en-US,en;q=0.9',
-            'Connection': 'keep-alive',
-            'Cache-Control': 'no-cache'
-          }
-        });
+        const baseUrl = CHANNEL_MAP[channelName].substring(0, CHANNEL_MAP[channelName].lastIndexOf('/') + 1);
         
+        const headers = {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+          'Origin': 'https://s3.itcnbd.live',
+          'Referer': 'https://s3.itcnbd.live/',
+          'Accept': '*/*',
+          'Accept-Language': 'en-US,en;q=0.9',
+          'Accept-Encoding': 'gzip, deflate, br',
+          'Connection': 'keep-alive',
+          'Cache-Control': 'no-cache'
+        };
+
+        const resp = await fetch(CHANNEL_MAP[channelName], { headers });
+        
+        // যদি রেসপন্স ২০০ না হয়, তাহলে এরর মেসেজ দেখাই
+        if (!resp.ok) {
+          return new Response(`Source returned ${resp.status}`, { status: resp.status });
+        }
+
         const text = await resp.text();
         const rewritten = await rewriteM3U8Content(text, baseUrl, channelName, SECRET, workerBase);
         return new Response(rewritten, {
-          headers: {
-            'Content-Type': 'application/vnd.apple.mpegurl',
+          headers: { 
+            'Content-Type': 'application/vnd.apple.mpegurl', 
             'Cache-Control': 'no-cache, no-store, must-revalidate',
             'Access-Control-Allow-Origin': '*',
             'Access-Control-Allow-Headers': '*',
@@ -173,6 +177,6 @@ export default {
       }
     }
 
-    return new Response('Channel not found. Available channels: ' + Object.keys(CHANNEL_MAP).join(', '), { status: 404 });
+    return new Response('Not Found', { status: 404 });
   }
 };
