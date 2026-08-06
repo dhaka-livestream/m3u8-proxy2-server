@@ -1,5 +1,5 @@
 // ============================================================
-//  ULTIMATE HLS PROXY - FORCED HEADERS + TEST CHANNEL
+//  COMPLETE DEBUG WORKER WITH /debug ROUTE
 // ============================================================
 
 const CHANNEL_MAP = {
@@ -44,7 +44,7 @@ async function createProxyUrl(originalUrl, baseUrl, channelName, expiry, secret,
 async function rewriteM3U8Content(text, baseUrl, channelName, secret, workerBase) {
   const lines = text.split('\n');
   const now = Math.floor(Date.now() / 1000);
-  const expiry = now + 600; 
+  const expiry = now + 600;
 
   const rewritten = await Promise.all(lines.map(async (line) => {
     const keyMatch = line.match(/^(#EXT-X-KEY:|#EXT-X-MAP:)(.*?)URI="([^"]*)"/i);
@@ -67,12 +67,25 @@ async function rewriteM3U8Content(text, baseUrl, channelName, secret, workerBase
 
 export default {
   async fetch(request, env, ctx) {
+    // 🟢 প্রথমেই চেক করি SECRET_KEY পাওয়া যাচ্ছে কিনা
     const SECRET = env.SECRET_KEY;
-    if (!SECRET) return new Response('SECRET_KEY missing', { status: 500 });
+    if (!SECRET) {
+      return new Response('SECRET_KEY is NOT set. Please add it as a Secret in Cloudflare Dashboard.', { 
+        status: 500,
+        headers: { 'Content-Type': 'text/plain' }
+      });
+    }
 
     const url = new URL(request.url);
     const pathname = url.pathname;
     const workerBase = `https://${request.headers.get('host')}`;
+
+    // 🟢 ডিবাগ রুট: /debug দেখলে SECRET_KEY সেট আছে কিনা দেখাবে
+    if (pathname === '/debug') {
+      return new Response(`✅ SECRET_KEY is set (length: ${SECRET.length})`, {
+        headers: { 'Content-Type': 'text/plain' }
+      });
+    }
 
     // ----- PROXY ROUTE (/p/...) -----
     if (pathname.startsWith('/p/')) {
@@ -96,7 +109,6 @@ export default {
       const baseUrl = originalBase.substring(0, originalBase.lastIndexOf('/') + 1);
       const originalUrl = baseUrl + relativePath.slice(1) + decodeURIComponent(originalQuery);
 
-      // 🔥 সর্বোচ্চ হেডার সেট (সব রকম সোর্সের জন্য)
       const headers = {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
         'Origin': 'https://s3.itcnbd.live',
@@ -105,11 +117,9 @@ export default {
         'Accept-Language': 'en-US,en;q=0.9',
         'Accept-Encoding': 'gzip, deflate, br',
         'Connection': 'keep-alive',
-        'Cache-Control': 'no-cache',
-        'Pragma': 'no-cache'
+        'Cache-Control': 'no-cache'
       };
 
-      // যদি ক্লায়েন্ট থেকে Range হেডার আসে, সেটা ফরোয়ার্ড করি
       if (request.headers.get('range')) {
         headers['Range'] = request.headers.get('range');
       }
@@ -131,7 +141,6 @@ export default {
         });
       }
 
-      // সেগমেন্ট (TS/MP4) রিটার্ন
       const newHeaders = new Headers(resp.headers);
       newHeaders.set('Cache-Control', 'no-cache, no-store, must-revalidate');
       newHeaders.set('Access-Control-Allow-Origin', '*');
@@ -158,9 +167,8 @@ export default {
 
         const resp = await fetch(CHANNEL_MAP[channelName], { headers });
         
-        // যদি রেসপন্স ২০০ না হয়, তাহলে এরর মেসেজ দেখাই
         if (!resp.ok) {
-          return new Response(`Source returned ${resp.status}`, { status: resp.status });
+          return new Response(`Source returned ${resp.status} - ${resp.statusText}`, { status: resp.status });
         }
 
         const text = await resp.text();
